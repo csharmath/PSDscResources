@@ -14,6 +14,9 @@ Import-Module -Name $script:commonResourceHelperFilePath
 # Localized messages for verbose and error statements in this resource
 $script:localizedData = Get-LocalizedData -ResourceName 'MSFT_ServiceResource'
 
+# gMSA regex pattern
+$script:gmsaPattern = '^(\w+)\\(.+)\$$'
+
 <#
     .SYNOPSIS
         Retrieves the current status of the service resource with the given name.
@@ -60,7 +63,7 @@ function Get-TargetResource
             'NT Authority\LocalService' { 'LocalService'; break }
             default { $serviceCimInstance.StartName }
         }
-        
+
         $serviceResource = @{
             Name            = $Name
             Ensure          = 'Present'
@@ -71,7 +74,7 @@ function Get-TargetResource
             DisplayName     = $service.DisplayName
             Description     = $serviceCimInstance.Description
             DesktopInteract = $serviceCimInstance.DesktopInteract
-            Dependencies    = $dependencies 
+            Dependencies    = $dependencies
         }
     }
     else
@@ -99,7 +102,7 @@ function Get-TargetResource
 
     .PARAMETER Ensure
         Specifies whether the service should exist or not.
-        
+
         Set this property to Present to create or modify a service.
         Set this property to Absent to delete a service.
 
@@ -161,6 +164,23 @@ function Get-TargetResource
         right.
 
         The user account specified by this property must have access to the service executable path
+        defined by Path in order to start the service.
+
+    .PARAMETER ServiceAccount
+        Group Managed Service Account (gMSA) the service should start under.
+        Needs to be in the format of NetbiosDomain\SamAccountName. i.e.: CORP\serviceAcount$
+        Note: SAMAccountName must end with a $ sign for gMSA
+
+        Cannot be specified at the same time as BuiltInAccount and Credential.
+        The identity specified will automatically be granted the Log on as a Service right.
+        
+        The gMSA account needs to be permissioned to be used on the host 
+        with the PrincipalsAllowedToRetrieveManagedPassword attribute.
+        Example to set the permission for the gMSA to be used by AD Group members:
+            Set-ADServiceAccount -Identity serviceAccount `
+                -PrincipalsAllowedToRetrieveManagedPassword "ADGroup.corp.contoso.com"
+
+        The identity specified by this property must have access to the service executable path
         defined by Path in order to start the service.
 
     .NOTES
@@ -226,7 +246,7 @@ function Set-TargetResource {
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
         $Credential,
-        
+
         [ValidateNotNull()]
         [string]
         $ServiceAccount
@@ -236,9 +256,14 @@ function Set-TargetResource {
         Assert-NoStartupTypeStateConflict -ServiceName $Name -StartupType $StartupType -State $State
     }
 
-    if ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $PSBoundParameters.ContainsKey('Credential')) {
-        $errorMessage = $script:localizedData.BuiltInAccountAndCredentialSpecified -f $Name
-        New-InvalidArgumentException -ArgumentName 'BuiltInAccount & Credential' -Message $errorMessage
+    # if any of these 3 Parameters are provided, we check for mutual exclusivity by XOR'ing them
+    if ($PSBoundParameters.ContainsKey('BuiltInAccount') -or $PSBoundParameters.ContainsKey('Credential') `
+            -or $PSBoundParameters.ContainsKey('ServiceAccount')) {
+        if (-not ($PSBoundParameters.ContainsKey('BuiltInAccount') -xor $PSBoundParameters.ContainsKey('Credential') `
+                    -xor $PSBoundParameters.ContainsKey('ServiceAccount'))) {
+            $errorMessage = $script:localizedData.BuiltInAccountAndCredentialAndServiceAccountSpecified -f $Name
+            New-InvalidArgumentException -ArgumentName 'BuiltInAccount & Credential & ServiceAccount' -Message $errorMessage
+        }
     }
 
     $service = Get-Service -Name $Name -ErrorAction 'SilentlyContinue'
@@ -246,15 +271,13 @@ function Set-TargetResource {
     if ($Ensure -eq 'Absent') {
         if ($null -eq $service) {
             Write-Verbose -Message $script:localizedData.ServiceAlreadyAbsent
-        }
-        else {
+        } else {
             Write-Verbose -Message ($script:localizedData.RemovingService -f $Name)
 
             Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
             Remove-ServiceWithTimeout -Name $Name -TerminateTimeout $TerminateTimeout
         }
-    }
-    else {
+    } else {
         $serviceRestartNeeded = $false
 
         # Create new service or update the service path if needed
@@ -262,13 +285,11 @@ function Set-TargetResource {
             if ($PSBoundParameters.ContainsKey('Path')) {
                 Write-Verbose -Message ($script:localizedData.CreatingService -f $Name, $Path)
                 $null = New-Service -Name $Name -BinaryPathName $Path
-            }
-            else {
+            } else {
                 $errorMessage = $script:localizedData.ServiceDoesNotExistPathMissingError -f $Name
                 New-InvalidArgumentException -ArgumentName 'Path' -Message $errorMessage
             }
-        }
-        else {
+        } else {
             if ($PSBoundParameters.ContainsKey('Path')) {
                 $serviceRestartNeeded = Set-ServicePath -ServiceName $Name -Path $Path
             }
@@ -277,14 +298,14 @@ function Set-TargetResource {
         # Update the properties of the service if needed
         $setServicePropertyParameters = @{}
 
-        $servicePropertyParameterNames = @( 'StartupType', 'BuiltInAccount', 'Credential', 'DesktopInteract', 'DisplayName', 'Description', 'Dependencies' )
+        $servicePropertyParameterNames = @( 'StartupType', 'BuiltInAccount', 'Credential','ServiceAccount', 'DesktopInteract', 'DisplayName', 'Description', 'Dependencies' )
 
         foreach ($servicePropertyParameterName in $servicePropertyParameterNames) {
             if ($PSBoundParameters.ContainsKey($servicePropertyParameterName)) {
                 $setServicePropertyParameters[$servicePropertyParameterName] = $PSBoundParameters[$servicePropertyParameterName]
             }
         }
-        
+
         if ($setServicePropertyParameters.Count -gt 0) {
             Write-Verbose -Message ($script:localizedData.EditingServiceProperties -f $Name)
             Set-ServiceProperty -ServiceName $Name @setServicePropertyParameters
@@ -293,8 +314,7 @@ function Set-TargetResource {
         # Update service state if needed
         if ($State -eq 'Stopped') {
             Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
-        }
-        elseif ($State -eq 'Running') {
+        } elseif ($State -eq 'Running') {
             if ($serviceRestartNeeded) {
                 Write-Verbose -Message ($script:localizedData.RestartingService -f $Name)
                 Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
@@ -311,14 +331,14 @@ function Set-TargetResource {
 
     .PARAMETER Name
         The name of the service to test.
-        
+
         This may be different from the service's display name.
         To retrieve a list of all services with their names and current states, use the Get-Service
         cmdlet.
 
     .PARAMETER Ensure
         Specifies whether the service should exist or not.
-        
+
         Set this property to Present to test if a service exists.
         Set this property to Absent to test if a service does not exist.
 
@@ -378,7 +398,7 @@ function Test-TargetResource
         [ValidateNotNullOrEmpty()]
         [String]
         $Name,
-      
+
         [ValidateSet('Present', 'Absent')]
         [String]
         $Ensure = 'Present',
@@ -423,7 +443,11 @@ function Test-TargetResource
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
-        $Credential
+        $Credential,
+
+        [ValidateNotNull()]
+        [string]
+        $ServiceAccount
     )
 
     if ($PSBoundParameters.ContainsKey('StartupType'))
@@ -431,6 +455,7 @@ function Test-TargetResource
         Assert-NoStartupTypeStateConflict -ServiceName $Name -StartupType $StartupType -State $State
     }
 
+    #TODO: add new validation
     if ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $PSBoundParameters.ContainsKey('Credential'))
     {
         $errorMessage = $script:localizedData.BuiltInAccountAndCredentialSpecified -f $Name
@@ -503,7 +528,7 @@ function Test-TargetResource
                 return $false
             }
         }
-            
+
         # Check the service desktop interation setting
         if ($PSBoundParameters.ContainsKey('DesktopInteract') -and $serviceResource.DesktopInteract -ine $DesktopInteract)
         {
@@ -512,7 +537,12 @@ function Test-TargetResource
         }
 
         # Check the service account properties
-        if ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $serviceResource.BuiltInAccount -ine $BuiltInAccount)
+        if ($PSBoundParameters.ContainsKey('ServiceAccount') -and $serviceResource.BuiltInAccount -ine $ServiceAccount)
+        {
+            Write-Verbose -Message ($script:localizedData.ServicePropertyDoesNotMatch -f 'ServiceAccount', $Name, $ServiceAccount, $serviceResource.BuiltInAccount)
+            return $false
+        }
+        elseif ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $serviceResource.BuiltInAccount -ine $BuiltInAccount)
         {
             Write-Verbose -Message ($script:localizedData.ServicePropertyDoesNotMatch -f 'BuiltInAccount', $Name, $BuiltInAccount, $serviceResource.BuiltInAccount)
             return $false
@@ -609,7 +639,7 @@ function ConvertTo-StartupTypeString
     .PARAMETER State
         The service state to check.
 #>
-function Assert-NoStartupTypeStateConflict 
+function Assert-NoStartupTypeStateConflict
 {
     [CmdletBinding()]
     param
@@ -776,7 +806,7 @@ function Set-ServicePath
         {
             $serviceChangePropertyString = $changeServiceArguments.Keys -join ', '
             $errorMessage = $script:localizedData.InvokeCimMethodFailed -f 'Change', $ServiceName, $serviceChangePropertyString, $changeServiceResult.ReturnValue
-            New-InvalidArgumentException -ArgumentName 'Path' -Message $errorMessage   
+            New-InvalidArgumentException -ArgumentName 'Path' -Message $errorMessage
         }
 
         return $true
@@ -1343,8 +1373,12 @@ function Set-ServiceAccountProperty
     }
     elseif ($PSBoundParameters.ContainsKey('ServiceAccount')) {
         # Validate the provided gMSA that it's in a NETBIOSDOMAIN\gmsaUser$ format
-        if ($ServiceAccount -match '^(\w+)\\(.+)\$$') {
+        # and use the identity without the domain and the $ sign with the Test/Install-AdServiceAccount cmdlets
+        Write-Verbose ("Checking gmsa Account: {0}" -f $ServiceAccount)
+        Write-Verbose "$serviceAccount -match $($script:gmsaPattern)"
+        if ($ServiceAccount -match $script:gmsaPattern) {
             $gmsaIdentity = $Matches[2]
+            # gMSA accounts needs to be installed which can be tested
             if (-not (Test-AdServiceAccount -Identity $gmsaIdentity)) {
                 try {
                     $verboseMessage = $script:localizedData.InstallingServiceAccount -f $gmsaIdentity
@@ -1352,20 +1386,21 @@ function Set-ServiceAccountProperty
                     Install-AdServiceAccount -Identity $gmsaIdentity -ErrorAction Stop
                 }
                 catch {
+                    # if install fail, it can be beacuase of permissions on the gMSA
                     $errorMessage = $script:localizedData.CannotInstallAdServiceAccount -f $gmsaIdentity
                     New-InvalidOperationException -Message $errorMessage
                 }
             }
         }
         else {
+            Write-Verbose "gmsa regex match failed"
             $errorMessage = $script:localizedData.InvalidServiceAccount -f $ServiceAccount
-            New-InvalidArgumentException -ArgumentName 'ServiceAccount' -Message $errorMessage         
+            New-InvalidArgumentException -ArgumentName 'ServiceAccount' -Message $errorMessage
         }
-        $startName = ConvertTo-StartName -Username $ServiceAccount
+        $startName = $ServiceAccount
 
         if ($serviceCimInstance.StartName -ine $startName) {
             Grant-LogOnAsServiceRight -Username $startName
-
             $changeServiceArguments['StartName'] = $startName
         }
     }
@@ -1387,7 +1422,7 @@ function Set-ServiceAccountProperty
         {
             $serviceChangePropertyString = $changeServiceArguments.Keys -join ', '
             $errorMessage = $script:localizedData.InvokeCimMethodFailed -f 'Change', $ServiceName, $serviceChangePropertyString, $changeServiceResult.ReturnValue
-            New-InvalidArgumentException -ArgumentName 'BuiltInAccount, Credential, or DesktopInteract' -Message $errorMessage
+            New-InvalidArgumentException -ArgumentName 'BuiltInAccount, Credential, ServiceAccount or DesktopInteract' -Message $errorMessage
         }
     }
 }
@@ -1546,7 +1581,7 @@ function Set-ServiceProperty
 
     # Update display name and/or description if needed
     $serviceCimInstance = Get-ServiceCimInstance -ServiceName $ServiceName
-    
+
     $setServiceParameters = @{}
 
     if ($PSBoundParameters.ContainsKey('DisplayName') -and $serviceCimInstance.DisplayName -ine $DisplayName)
@@ -1583,7 +1618,7 @@ function Set-ServiceProperty
     }
     elseif ($PSBoundParameters.ContainsKey('ServiceAccount'))
     {
-        $setServiceAccountPropertyParameters['ServiceAccount'] = $ServiceAccount    
+        $setServiceAccountPropertyParameters['ServiceAccount'] = $ServiceAccount
     }
 
     if ($PSBoundParameters.ContainsKey('DesktopInteract'))
@@ -1685,7 +1720,7 @@ function Remove-ServiceWithTimeout
     .SYNOPSIS
         Waits for the service with the given name to reach the given state within the given time
         span.
-        
+
         This is a wrapper function for unit testing.
 
     .PARAMETER ServiceName

@@ -7,7 +7,7 @@
 ConvertFrom-StringData @'
     ServiceExists = Service {0} exists.
     ServiceDoesNotExist = Service {0} does not exist.
-    BuiltInAccountAndCredentialSpecified = Both BuiltInAccount and Credential cannot be specified. Please remove one for service {0}.
+    BuiltInAccountAndCredentialAndServiceAccountSpecified = BuiltInAccount, Credential and ServiceAccount are mutually exclusive. Please only specify one of them for service {0}.
     ServiceAlreadyAbsent = Service {0} is already absent. No change required.
     ServiceDoesNotExistPathMissingError = The service '{0}' does not exist, but Path was not specified. Please specify the path to the executable the service should run to create a new service.
     CreatingService = Creating new service {0}...
@@ -37,6 +37,6 @@ ConvertFrom-StringData @'
     CannotGetAccountAccessErrorMessage = Failed to get user policy rights.
     CannotSetAccountAccessErrorMessage = Failed to set user policy rights.
     CannotInstallAdServiceAccount = Failed while running Install-AdServiceAccount -Identity {0}. Check permissions!
-    InvalidServiceAccount = Services account name {0} is not in a valid format of domain\serviceAccount$!
+    InvalidServiceAccount = Services account name {0} is not in a valid format of domain\\serviceAccount\$!
     InstallingServiceAccount = Installing service account {0}.
 '@
