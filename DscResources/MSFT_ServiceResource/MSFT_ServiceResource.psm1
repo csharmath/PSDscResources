@@ -172,8 +172,7 @@ function Get-TargetResource
                                                    --> Set-ServiceAccountProperty --> Invoke-CimMethod
                                                    --> Set-ServiceStartupType --> Invoke-CimMethod
 #>
-function Set-TargetResource
-{
+function Set-TargetResource {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param
     (
@@ -226,58 +225,51 @@ function Set-TargetResource
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
-        $Credential
+        $Credential,
+        
+        [ValidateNotNull()]
+        [string]
+        $ServiceAccount
     )
 
-    if ($PSBoundParameters.ContainsKey('StartupType'))
-    {
+    if ($PSBoundParameters.ContainsKey('StartupType')) {
         Assert-NoStartupTypeStateConflict -ServiceName $Name -StartupType $StartupType -State $State
     }
 
-    if ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $PSBoundParameters.ContainsKey('Credential'))
-    {
+    if ($PSBoundParameters.ContainsKey('BuiltInAccount') -and $PSBoundParameters.ContainsKey('Credential')) {
         $errorMessage = $script:localizedData.BuiltInAccountAndCredentialSpecified -f $Name
         New-InvalidArgumentException -ArgumentName 'BuiltInAccount & Credential' -Message $errorMessage
     }
 
     $service = Get-Service -Name $Name -ErrorAction 'SilentlyContinue'
 
-    if ($Ensure -eq 'Absent')
-    {
-        if ($null -eq $service)
-        {
+    if ($Ensure -eq 'Absent') {
+        if ($null -eq $service) {
             Write-Verbose -Message $script:localizedData.ServiceAlreadyAbsent
         }
-        else
-        {
+        else {
             Write-Verbose -Message ($script:localizedData.RemovingService -f $Name)
 
             Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
             Remove-ServiceWithTimeout -Name $Name -TerminateTimeout $TerminateTimeout
         }
     }
-    else
-    {
+    else {
         $serviceRestartNeeded = $false
 
         # Create new service or update the service path if needed
-        if ($null -eq $service)
-        {
-            if ($PSBoundParameters.ContainsKey('Path'))
-            {
+        if ($null -eq $service) {
+            if ($PSBoundParameters.ContainsKey('Path')) {
                 Write-Verbose -Message ($script:localizedData.CreatingService -f $Name, $Path)
                 $null = New-Service -Name $Name -BinaryPathName $Path
             }
-            else
-            {
+            else {
                 $errorMessage = $script:localizedData.ServiceDoesNotExistPathMissingError -f $Name
                 New-InvalidArgumentException -ArgumentName 'Path' -Message $errorMessage
             }
         }
-        else
-        {
-            if ($PSBoundParameters.ContainsKey('Path'))
-            {
+        else {
+            if ($PSBoundParameters.ContainsKey('Path')) {
                 $serviceRestartNeeded = Set-ServicePath -ServiceName $Name -Path $Path
             }
         }
@@ -287,29 +279,23 @@ function Set-TargetResource
 
         $servicePropertyParameterNames = @( 'StartupType', 'BuiltInAccount', 'Credential', 'DesktopInteract', 'DisplayName', 'Description', 'Dependencies' )
 
-        foreach ($servicePropertyParameterName in $servicePropertyParameterNames)
-        {
-            if ($PSBoundParameters.ContainsKey($servicePropertyParameterName))
-            {
+        foreach ($servicePropertyParameterName in $servicePropertyParameterNames) {
+            if ($PSBoundParameters.ContainsKey($servicePropertyParameterName)) {
                 $setServicePropertyParameters[$servicePropertyParameterName] = $PSBoundParameters[$servicePropertyParameterName]
             }
         }
         
-        if ($setServicePropertyParameters.Count -gt 0)
-        {
+        if ($setServicePropertyParameters.Count -gt 0) {
             Write-Verbose -Message ($script:localizedData.EditingServiceProperties -f $Name)
             Set-ServiceProperty -ServiceName $Name @setServicePropertyParameters
         }
 
         # Update service state if needed
-        if ($State -eq 'Stopped')
-        {
+        if ($State -eq 'Stopped') {
             Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
         }
-        elseif ($State -eq 'Running')
-        {
-            if ($serviceRestartNeeded)
-            {
+        elseif ($State -eq 'Running') {
+            if ($serviceRestartNeeded) {
                 Write-Verbose -Message ($script:localizedData.RestartingService -f $Name)
                 Stop-ServiceWithTimeout -ServiceName $Name -TerminateTimeout $TerminateTimeout
             }
@@ -1325,6 +1311,10 @@ function Set-ServiceAccountProperty
         $Credential,
 
         [Parameter()]
+        [string]
+        $ServiceAccount,
+
+        [Parameter()]
         [Boolean]
         $DesktopInteract
     )
@@ -1333,28 +1323,53 @@ function Set-ServiceAccountProperty
 
     $changeServiceArguments = @{}
 
-    if ($PSBoundParameters.ContainsKey('BuiltInAccount'))
-    {
+    if ($PSBoundParameters.ContainsKey('BuiltInAccount')) {
         $startName = ConvertTo-StartName -Username $BuiltInAccount
 
-        if ($serviceCimInstance.StartName -ine $startName)
-        {
+        if ($serviceCimInstance.StartName -ine $startName) {
             $changeServiceArguments['StartName'] = $startName
             $changeServiceArguments['StartPassword'] = ''
         }
     }
-    elseif ($PSBoundParameters.ContainsKey('Credential'))
-    {
+    elseif ($PSBoundParameters.ContainsKey('Credential')) {
         $startName = ConvertTo-StartName -Username $Credential.UserName
 
-        if ($serviceCimInstance.StartName -ine $startName)
-        {
+        if ($serviceCimInstance.StartName -ine $startName) {
             Grant-LogOnAsServiceRight -Username $startName
 
             $changeServiceArguments['StartName'] = $startName
             $changeServiceArguments['StartPassword'] = $Credential.GetNetworkCredential().Password
         }
     }
+    elseif ($PSBoundParameters.ContainsKey('ServiceAccount')) {
+        # Validate the provided gMSA that it's in a NETBIOSDOMAIN\gmsaUser$ format
+        if ($ServiceAccount -match '^(\w+)\\(.+)\$$') {
+            $gmsaIdentity = $Matches[2]
+            if (-not (Test-AdServiceAccount -Identity $gmsaIdentity)) {
+                try {
+                    $verboseMessage = $script:localizedData.InstallingServiceAccount -f $gmsaIdentity
+                    Write-Verbose $verboseMessage
+                    Install-AdServiceAccount -Identity $gmsaIdentity -ErrorAction Stop
+                }
+                catch {
+                    $errorMessage = $script:localizedData.CannotInstallAdServiceAccount -f $gmsaIdentity
+                    New-InvalidOperationException -Message $errorMessage
+                }
+            }
+        }
+        else {
+            $errorMessage = $script:localizedData.InvalidServiceAccount -f $ServiceAccount
+            New-InvalidArgumentException -ArgumentName 'ServiceAccount' -Message $errorMessage         
+        }
+        $startName = ConvertTo-StartName -Username $ServiceAccount
+
+        if ($serviceCimInstance.StartName -ine $startName) {
+            Grant-LogOnAsServiceRight -Username $startName
+
+            $changeServiceArguments['StartName'] = $startName
+        }
+    }
+
 
     if ($PSBoundParameters.ContainsKey('DesktopInteract'))
     {
@@ -1521,7 +1536,12 @@ function Set-ServiceProperty
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
-        $Credential
+        $Credential,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [string]
+        $ServiceAccount
     )
 
     # Update display name and/or description if needed
@@ -1560,6 +1580,10 @@ function Set-ServiceProperty
     elseif ($PSBoundParameters.ContainsKey('Credential'))
     {
         $setServiceAccountPropertyParameters['Credential'] = $Credential
+    }
+    elseif ($PSBoundParameters.ContainsKey('ServiceAccount'))
+    {
+        $setServiceAccountPropertyParameters['ServiceAccount'] = $ServiceAccount    
     }
 
     if ($PSBoundParameters.ContainsKey('DesktopInteract'))

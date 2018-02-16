@@ -36,4 +36,7 @@ ConvertFrom-StringData @'
     CannotCreateAccountAccessErrorMessage = Failed to create policy for user.
     CannotGetAccountAccessErrorMessage = Failed to get user policy rights.
     CannotSetAccountAccessErrorMessage = Failed to set user policy rights.
+    CannotInstallAdServiceAccount = Failed while running Install-AdServiceAccount -Identity {0}. Check permissions!
+    InvalidServiceAccount = Services account name {0} is not in a valid format of domain\serviceAccount$!
+    InstallingServiceAccount = Installing service account {0}.
 '@
