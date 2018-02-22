@@ -72,7 +72,11 @@ Configuration ServiceSet
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]
-        $Credential
+        $Credential,
+
+        [ValidateNotNull()]
+        [String]
+        $ServiceAccount
     )
 
     $newResourceSetConfigurationParams = @{

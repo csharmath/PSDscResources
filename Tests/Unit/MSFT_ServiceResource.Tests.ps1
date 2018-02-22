@@ -371,10 +371,11 @@ try
                     Name = $script:testServiceName
                     BuiltInAccount = 'LocalSystem'
                     Credential = $script:testCredential1
+                    ServiceAccount = 'CORP\serviceAccount$'
                 }
 
                 It 'Should throw an error for BuiltInAccount and Credential conflict' {
-                    $expectedErrorMessage = $script:localizedData.BuiltInAccountAndCredentialSpecified -f $setTargetResourceParameters.Name
+                    $expectedErrorMessage = $script:localizedData.BuiltInAccountAndCredentialAndServiceAccountSpecified -f $setTargetResourceParameters.Name
                     { Set-TargetResource @setTargetResourceParameters } | Should Throw $expectedErrorMessage
                 }
             }
@@ -930,15 +931,16 @@ try
             Mock -CommandName 'Test-PathsMatch' -MockWith { return $true }
             Mock -CommandName 'ConvertTo-StartName' -MockWith { return $Username }
 
-            Context 'Both BuiltInAccount and Credential specified' {
+            Context 'Both BuiltInAccount, Credential and ServiceAccount specified' {
                 $testTargetResourceParameters = @{
                     Name = $script:testServiceName
                     BuiltInAccount = 'LocalSystem'
-                    Credential = $script:testCredential1
+                    Credential     = $script:testCredential1
+                    ServiceAccount = 'CORP\ServiceAccount$'    
                 }
 
-                It 'Should throw an error for BuiltInAccount and Credential conflict' {
-                    $expectedErrorMessage = $script:localizedData.BuiltInAccountAndCredentialSpecified -f $testTargetResourceParameters.Name
+                It 'Should throw an error for BuiltInAccount, Credential and ServiceAccount conflict' {
+                    $expectedErrorMessage = $script:localizedData.BuiltInAccountAndCredentialAndServiceAccountSpecified -f $testTargetResourceParameters.Name
                     { Test-TargetResource @testTargetResourceParameters } | Should Throw $expectedErrorMessage
                 }
             }

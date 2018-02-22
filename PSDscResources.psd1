@@ -102,7 +102,7 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = '* ServiceResource:
-    * 
+    * Added support for group managed service accounts (gMSA) with the ServiceAccount parameter
 * Archive:
     * Added handling of directory archive entries that end with a foward slash
     * Removed formatting of LastWriteTime timestamp and updated comparison of timestamps to handle dates in different formats

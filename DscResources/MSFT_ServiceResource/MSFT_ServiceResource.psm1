@@ -249,7 +249,7 @@ function Set-TargetResource
         $Credential,
 
         [ValidateNotNull()]
-        [string]
+        [String]
         $ServiceAccount
     )
 
@@ -258,12 +258,12 @@ function Set-TargetResource
         Assert-NoStartupTypeStateConflict -ServiceName $Name -StartupType $StartupType -State $State
     }
 
-    # if any of these 3 Parameters are provided, we check for mutual exclusivity by XOR'ing them
     if ($PSBoundParameters.ContainsKey('BuiltInAccount') -or $PSBoundParameters.ContainsKey('Credential') `
             -or $PSBoundParameters.ContainsKey('ServiceAccount'))
     {
-        if (-not ($PSBoundParameters.ContainsKey('BuiltInAccount') -xor $PSBoundParameters.ContainsKey('Credential') `
-                    -xor $PSBoundParameters.ContainsKey('ServiceAccount')))
+        # if the sum of the int converted booleans of the mutually exclusive parameters is greater than 1, we throw
+        if (([int]$PSBoundParameters.ContainsKey('BuiltInAccount') + [int]$PSBoundParameters.ContainsKey('Credential') `
+                    + $PSBoundParameters.ContainsKey('ServiceAccount')) -gt 1)
         {
             $errorMessage = $script:localizedData.BuiltInAccountAndCredentialAndServiceAccountSpecified -f $Name
             New-InvalidArgumentException -ArgumentName 'BuiltInAccount & Credential & ServiceAccount' -Message $errorMessage
@@ -470,7 +470,7 @@ function Test-TargetResource
         $Credential,
 
         [ValidateNotNull()]
-        [string]
+        [String]
         $ServiceAccount
     )
 
@@ -482,8 +482,9 @@ function Test-TargetResource
     if ($PSBoundParameters.ContainsKey('BuiltInAccount') -or $PSBoundParameters.ContainsKey('Credential') `
             -or $PSBoundParameters.ContainsKey('ServiceAccount'))
     {
-        if (-not ($PSBoundParameters.ContainsKey('BuiltInAccount') -xor $PSBoundParameters.ContainsKey('Credential') `
-                    -xor $PSBoundParameters.ContainsKey('ServiceAccount')))
+        # if the sum of the int converted booleans of the mutually exclusive parameters is greater than 1, we throw
+        if (([int]$PSBoundParameters.ContainsKey('BuiltInAccount') + [int]$PSBoundParameters.ContainsKey('Credential') `
+                    + $PSBoundParameters.ContainsKey('ServiceAccount')) -gt 1)
         {
             $errorMessage = $script:localizedData.BuiltInAccountAndCredentialAndServiceAccountSpecified -f $Name
             New-InvalidArgumentException -ArgumentName 'BuiltInAccount & Credential & ServiceAccount' -Message $errorMessage
@@ -1373,7 +1374,7 @@ function Set-ServiceAccountProperty
         $Credential,
 
         [Parameter()]
-        [string]
+        [String]
         $ServiceAccount,
 
         [Parameter()]
@@ -1624,7 +1625,7 @@ function Set-ServiceProperty
 
         [Parameter()]
         [ValidateNotNull()]
-        [string]
+        [String]
         $ServiceAccount
     )
 
